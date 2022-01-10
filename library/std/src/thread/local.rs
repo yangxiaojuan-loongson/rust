@@ -193,7 +193,11 @@ macro_rules! __thread_local_inner {
             #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
             {
                 static mut VAL: $t = INIT_EXPR;
-                $crate::option::Option::Some(&VAL)
+                // FIXME: remove the #[allow(...)] marker when macros don't
+                // raise warning for missing/extraneous unsafe blocks anymore.
+                // See https://github.com/rust-lang/rust/issues/74838.
+                #[allow(unused_unsafe)]
+                unsafe { $crate::option::Option::Some(&VAL) }
             }
 
             // If the platform has support for `#[thread_local]`, use it.
@@ -208,8 +212,12 @@ macro_rules! __thread_local_inner {
                 // If a dtor isn't needed we can do something "very raw" and
                 // just get going.
                 if !$crate::mem::needs_drop::<$t>() {
+                    // FIXME: remove the #[allow(...)] marker when macros don't
+                    // raise warning for missing/extraneous unsafe blocks anymore.
+                    // See https://github.com/rust-lang/rust/issues/74838.
+                    #[allow(unused_unsafe)]
                     unsafe {
-                        return $crate::option::Option::Some(&VAL)
+                        return $crate::option::Option::Some(&VAL);
                     }
                 }
 
