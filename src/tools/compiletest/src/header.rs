@@ -920,31 +920,33 @@ pub fn make_test_description<R: Read>(
                 ParsedNameDirective::NoMatch => true,
             };
         }
-        ignore |= ignore_llvm(config, ln);
-        ignore |=
-            config.run_clang_based_tests_with.is_none() && config.parse_needs_matching_clang(ln);
-        ignore |= !has_asm_support && config.parse_name_directive(ln, "needs-asm-support");
-        ignore |= !rustc_has_profiler_support && config.parse_needs_profiler_support(ln);
-        ignore |= !config.run_enabled() && config.parse_name_directive(ln, "needs-run-enabled");
-        ignore |= !rustc_has_sanitizer_support
-            && config.parse_name_directive(ln, "needs-sanitizer-support");
-        ignore |= !has_asan && config.parse_name_directive(ln, "needs-sanitizer-address");
-        ignore |= !has_cfi && config.parse_name_directive(ln, "needs-sanitizer-cfi");
-        ignore |= !has_lsan && config.parse_name_directive(ln, "needs-sanitizer-leak");
-        ignore |= !has_msan && config.parse_name_directive(ln, "needs-sanitizer-memory");
-        ignore |= !has_tsan && config.parse_name_directive(ln, "needs-sanitizer-thread");
-        ignore |= !has_hwasan && config.parse_name_directive(ln, "needs-sanitizer-hwaddress");
-        ignore |= !has_memtag && config.parse_name_directive(ln, "needs-sanitizer-memtag");
-        ignore |= !has_shadow_call_stack
-            && config.parse_name_directive(ln, "needs-sanitizer-shadow-call-stack");
-        ignore |= config.target_panic == PanicStrategy::Abort
-            && config.parse_name_directive(ln, "needs-unwind");
-        ignore |= config.target == "wasm32-unknown-unknown"
-            && config.parse_name_directive(ln, directives::CHECK_RUN_RESULTS);
-        ignore |= config.debugger == Some(Debugger::Cdb) && ignore_cdb(config, ln);
-        ignore |= config.debugger == Some(Debugger::Gdb) && ignore_gdb(config, ln);
-        ignore |= config.debugger == Some(Debugger::Lldb) && ignore_lldb(config, ln);
-        ignore |= !has_rust_lld && config.parse_name_directive(ln, "needs-rust-lld");
+        if !ignore {
+            ignore |= ignore_llvm(config, ln);
+            ignore |= config.run_clang_based_tests_with.is_none()
+                && config.parse_needs_matching_clang(ln);
+            ignore |= !has_asm_support && config.parse_name_directive(ln, "needs-asm-support");
+            ignore |= !rustc_has_profiler_support && config.parse_needs_profiler_support(ln);
+            ignore |= !config.run_enabled() && config.parse_name_directive(ln, "needs-run-enabled");
+            ignore |= !rustc_has_sanitizer_support
+                && config.parse_name_directive(ln, "needs-sanitizer-support");
+            ignore |= !has_asan && config.parse_name_directive(ln, "needs-sanitizer-address");
+            ignore |= !has_cfi && config.parse_name_directive(ln, "needs-sanitizer-cfi");
+            ignore |= !has_lsan && config.parse_name_directive(ln, "needs-sanitizer-leak");
+            ignore |= !has_msan && config.parse_name_directive(ln, "needs-sanitizer-memory");
+            ignore |= !has_tsan && config.parse_name_directive(ln, "needs-sanitizer-thread");
+            ignore |= !has_hwasan && config.parse_name_directive(ln, "needs-sanitizer-hwaddress");
+            ignore |= !has_memtag && config.parse_name_directive(ln, "needs-sanitizer-memtag");
+            ignore |= !has_shadow_call_stack
+                && config.parse_name_directive(ln, "needs-sanitizer-shadow-call-stack");
+            ignore |= config.target_panic == PanicStrategy::Abort
+                && config.parse_name_directive(ln, "needs-unwind");
+            ignore |= config.target == "wasm32-unknown-unknown"
+                && config.parse_name_directive(ln, directives::CHECK_RUN_RESULTS);
+            ignore |= config.debugger == Some(Debugger::Cdb) && ignore_cdb(config, ln);
+            ignore |= config.debugger == Some(Debugger::Gdb) && ignore_gdb(config, ln);
+            ignore |= config.debugger == Some(Debugger::Lldb) && ignore_lldb(config, ln);
+            ignore |= !has_rust_lld && config.parse_name_directive(ln, "needs-rust-lld");
+        }
         should_fail |= config.parse_name_directive(ln, "should-fail");
     });
 
@@ -1034,6 +1036,36 @@ fn ignore_llvm(config: &Config, line: &str) -> bool {
     if config.system_llvm && line.starts_with("no-system-llvm") {
         return true;
     }
+    if let Some(actual_version) = config.llvm_version {
+        if let Some(rest) = line.strip_prefix("min-llvm-version:").map(str::trim) {
+            let min_version = extract_llvm_version(rest).unwrap();
+            // Ignore if actual version is smaller the minimum required
+            // version
+            if actual_version < min_version {
+                return true;
+            }
+        } else if let Some(rest) = line.strip_prefix("min-system-llvm-version:").map(str::trim) {
+            let min_version = extract_llvm_version(rest).unwrap();
+            // Ignore if using system LLVM and actual version
+            // is smaller the minimum required version
+            if config.system_llvm && actual_version < min_version {
+                return true;
+            }
+        } else if let Some(rest) = line.strip_prefix("ignore-llvm-version:").map(str::trim) {
+            // Syntax is: "ignore-llvm-version: <version1> [- <version2>]"
+            let (v_min, v_max) =
+                extract_version_range(rest, extract_llvm_version).unwrap_or_else(|| {
+                    panic!("couldn't parse version range: {:?}", rest);
+                });
+            if v_max < v_min {
+                panic!("Malformed LLVM version range: max < min")
+            }
+            // Ignore if version lies inside of range.
+            if actual_version >= v_min && actual_version <= v_max {
+                return true;
+            }
+        }
+    }
     if let Some(needed_components) =
         config.parse_name_value_directive(line, "needs-llvm-components")
     {
@@ -1045,31 +1077,7 @@ fn ignore_llvm(config: &Config, line: &str) -> bool {
             if env::var_os("COMPILETEST_NEEDS_ALL_LLVM_COMPONENTS").is_some() {
                 panic!("missing LLVM component: {}", missing_component);
             }
-            return true;
-        }
-    }
-    if let Some(actual_version) = config.llvm_version {
-        if let Some(rest) = line.strip_prefix("min-llvm-version:").map(str::trim) {
-            let min_version = extract_llvm_version(rest).unwrap();
-            // Ignore if actual version is smaller the minimum required
-            // version
-            actual_version < min_version
-        } else if let Some(rest) = line.strip_prefix("min-system-llvm-version:").map(str::trim) {
-            let min_version = extract_llvm_version(rest).unwrap();
-            // Ignore if using system LLVM and actual version
-            // is smaller the minimum required version
-            config.system_llvm && actual_version < min_version
-        } else if let Some(rest) = line.strip_prefix("ignore-llvm-version:").map(str::trim) {
-            // Syntax is: "ignore-llvm-version: <version1> [- <version2>]"
-            let (v_min, v_max) =
-                extract_version_range(rest, extract_llvm_version).unwrap_or_else(|| {
-                    panic!("couldn't parse version range: {:?}", rest);
-                });
-            if v_max < v_min {
-                panic!("Malformed LLVM version range: max < min")
-            }
-            // Ignore if version lies inside of range.
-            actual_version >= v_min && actual_version <= v_max
+            true
         } else {
             false
         }
