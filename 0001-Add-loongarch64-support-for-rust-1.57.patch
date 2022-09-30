@@ -1,0 +1,1784 @@
+From acb67ad5ac1f9de574a530a1c2c24bdb9dc9014f Mon Sep 17 00:00:00 2001
+From: yangxiaojuan <yangxiaojuan@loongson.cn>
+Date: Mon, 22 Aug 2022 20:30:26 +0800
+Subject: [PATCH 1/2] Add loongarch64 support for rust-1.57
+
+Change-Id: I085b3955edcb15c6f8d42b585ba966233652e675
+---
+ .../example/alloc_system.rs                   |   1 +
+ .../rustc_codegen_cranelift/src/metadata.rs   |   1 +
+ .../rustc_codegen_gcc/example/alloc_system.rs |   1 +
+ compiler/rustc_codegen_gcc/src/asm.rs         |   5 +
+ compiler/rustc_codegen_llvm/src/asm.rs        |   6 +
+ compiler/rustc_codegen_ssa/src/back/link.rs   |   7 +
+ .../rustc_codegen_ssa/src/target_features.rs  |   7 +
+ compiler/rustc_feature/src/active.rs          |   1 +
+ compiler/rustc_llvm/build.rs                  |   1 +
+ .../rustc_llvm/llvm-wrapper/PassWrapper.cpp   |   7 +
+ compiler/rustc_llvm/src/lib.rs                |   8 +
+ compiler/rustc_span/src/symbol.rs             |   1 +
+ .../rustc_target/src/abi/call/loongarch.rs    | 343 ++++++++++++++++++
+ compiler/rustc_target/src/abi/call/mod.rs     |   2 +
+ compiler/rustc_target/src/asm/loongarch.rs    | 130 +++++++
+ compiler/rustc_target/src/asm/mod.rs          |  25 ++
+ .../spec/loongarch64_unknown_linux_gnuf64.rs  |  19 +
+ compiler/rustc_target/src/spec/mod.rs         |   1 +
+ compiler/rustc_typeck/src/collect.rs          |   1 +
+ library/core/src/lib.rs                       |   1 +
+ library/panic_unwind/src/gcc.rs               |   3 +
+ library/std/src/env.rs                        |   1 +
+ library/std/src/os/linux/raw.rs               |   1 +
+ library/std/src/sys/common/alloc.rs           |   1 +
+ library/unwind/src/libunwind.rs               |   3 +
+ src/bootstrap/bootstrap.py                    |   1 +
+ src/bootstrap/native.rs                       |   2 +-
+ src/ci/github-actions/ci.yml                  |   3 +
+ src/doc/rustc/src/platform-support.md         |   1 +
+ src/librustdoc/clean/cfg.rs                   |   1 +
+ src/test/assembly/asm/loongarch-types.rs      | 194 ++++++++++
+ .../codegen/abi-main-signature-16bit-c-int.rs |   1 +
+ src/test/codegen/call-llvm-intrinsics.rs      |   1 +
+ src/test/codegen/fastcall-inreg.rs            |   1 +
+ src/test/codegen/global_asm.rs                |   1 +
+ src/test/codegen/global_asm_include.rs        |   1 +
+ src/test/codegen/global_asm_x2.rs             |   1 +
+ .../loongarch-abi/call-llvm-intrinsics.rs     |  30 ++
+ .../codegen/repr-transparent-aggregates-1.rs  |   1 +
+ .../codegen/repr-transparent-aggregates-2.rs  |   1 +
+ src/test/codegen/repr-transparent.rs          |   1 +
+ src/test/codegen/stack-probes.rs              |   1 +
+ .../atomic-lock-free/Makefile                 |   4 +
+ src/test/ui/abi/stack-probes-lto.rs           |   1 +
+ src/test/ui/borrowck/borrowck-asm.rs          |   2 +
+ src/test/ui/cfg/conditional-compile-arch.rs   |   3 +
+ src/test/ui/empty_global_asm.rs               |   3 +
+ src/test/ui/llvm-asm/llvm-asm-bad-clobber.rs  |   1 +
+ .../ui/llvm-asm/llvm-asm-in-bad-modifier.rs   |   1 +
+ .../ui/llvm-asm/llvm-asm-misplaced-option.rs  |   1 +
+ .../ui/llvm-asm/llvm-asm-out-assign-imm.rs    |   1 +
+ .../ui/llvm-asm/llvm-asm-out-no-modifier.rs   |   1 +
+ .../ui/llvm-asm/llvm-asm-out-read-uninit.rs   |   1 +
+ src/test/ui/target-feature/gate.rs            |   2 +
+ .../ui/target-feature/invalid-attribute.rs    |   1 +
+ src/tools/build-manifest/src/main.rs          |   2 +
+ src/tools/clippy/tests/ui/asm_syntax.rs       |   1 +
+ src/tools/compiletest/src/json.rs             |   4 +-
+ src/tools/compiletest/src/util.rs             |   3 +-
+ src/tools/miri/src/shims/foreign_items.rs     |   2 +-
+ 60 files changed, 848 insertions(+), 5 deletions(-)
+ create mode 100644 compiler/rustc_target/src/abi/call/loongarch.rs
+ create mode 100644 compiler/rustc_target/src/asm/loongarch.rs
+ create mode 100644 compiler/rustc_target/src/spec/loongarch64_unknown_linux_gnuf64.rs
+ create mode 100644 src/test/assembly/asm/loongarch-types.rs
+ create mode 100644 src/test/codegen/loongarch-abi/call-llvm-intrinsics.rs
+
+diff --git a/compiler/rustc_codegen_cranelift/example/alloc_system.rs b/compiler/rustc_codegen_cranelift/example/alloc_system.rs
+index 5f66ca67f..c11979acd 100644
+--- a/compiler/rustc_codegen_cranelift/example/alloc_system.rs
++++ b/compiler/rustc_codegen_cranelift/example/alloc_system.rs
+@@ -21,6 +21,7 @@
+ const MIN_ALIGN: usize = 8;
+ #[cfg(all(any(target_arch = "x86_64",
+               target_arch = "aarch64",
++              target_arch = "loongarch64",
+               target_arch = "mips64",
+               target_arch = "s390x",
+               target_arch = "sparc64")))]
+diff --git a/compiler/rustc_codegen_cranelift/src/metadata.rs b/compiler/rustc_codegen_cranelift/src/metadata.rs
+index 1c8fd0b01..c06876ad2 100644
+--- a/compiler/rustc_codegen_cranelift/src/metadata.rs
++++ b/compiler/rustc_codegen_cranelift/src/metadata.rs
+@@ -31,6 +31,7 @@ pub(crate) fn new_metadata_object(
+         target_lexicon::Architecture::Arm(_) => object::Architecture::Arm,
+         target_lexicon::Architecture::Avr => object::Architecture::Avr,
+         target_lexicon::Architecture::Hexagon => object::Architecture::Hexagon,
++        target_lexicon::Architecture::LoongArch64(_) => object::Architecture::LoongArch64,
+         target_lexicon::Architecture::Mips32(_) => object::Architecture::Mips,
+         target_lexicon::Architecture::Mips64(_) => object::Architecture::Mips64,
+         target_lexicon::Architecture::Msp430 => object::Architecture::Msp430,
+diff --git a/compiler/rustc_codegen_gcc/example/alloc_system.rs b/compiler/rustc_codegen_gcc/example/alloc_system.rs
+index 5f66ca67f..c11979acd 100644
+--- a/compiler/rustc_codegen_gcc/example/alloc_system.rs
++++ b/compiler/rustc_codegen_gcc/example/alloc_system.rs
+@@ -21,6 +21,7 @@
+ const MIN_ALIGN: usize = 8;
+ #[cfg(all(any(target_arch = "x86_64",
+               target_arch = "aarch64",
++              target_arch = "loongarch64",
+               target_arch = "mips64",
+               target_arch = "s390x",
+               target_arch = "sparc64")))]
+diff --git a/compiler/rustc_codegen_gcc/src/asm.rs b/compiler/rustc_codegen_gcc/src/asm.rs
+index 3b77097e9..6016ca480 100644
+--- a/compiler/rustc_codegen_gcc/src/asm.rs
++++ b/compiler/rustc_codegen_gcc/src/asm.rs
+@@ -572,6 +572,8 @@ fn reg_to_gcc(reg: InlineAsmRegOrRegClass) -> ConstraintOrRegister {
+             | InlineAsmRegClass::Arm(ArmInlineAsmRegClass::qreg) => unimplemented!(),
+             InlineAsmRegClass::Bpf(_) => unimplemented!(),
+             InlineAsmRegClass::Hexagon(HexagonInlineAsmRegClass::reg) => unimplemented!(),
++            InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::reg) => unimplemented!(),
++            InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::freg) => unimplemented!(),
+             InlineAsmRegClass::Mips(MipsInlineAsmRegClass::reg) => unimplemented!(),
+             InlineAsmRegClass::Mips(MipsInlineAsmRegClass::freg) => unimplemented!(),
+             InlineAsmRegClass::Nvptx(NvptxInlineAsmRegClass::reg16) => unimplemented!(),
+@@ -634,6 +636,8 @@ fn dummy_output_type<'gcc, 'tcx>(cx: &CodegenCx<'gcc, 'tcx>, reg: InlineAsmRegCl
+         }
+         InlineAsmRegClass::Bpf(_) => unimplemented!(),
+         InlineAsmRegClass::Hexagon(HexagonInlineAsmRegClass::reg) => cx.type_i32(),
++        InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::reg) => cx.type_i32(),
++        InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::freg) => cx.type_f32(),
+         InlineAsmRegClass::Mips(MipsInlineAsmRegClass::reg) => cx.type_i32(),
+         InlineAsmRegClass::Mips(MipsInlineAsmRegClass::freg) => cx.type_f32(),
+         InlineAsmRegClass::Nvptx(NvptxInlineAsmRegClass::reg16) => cx.type_i16(),
+@@ -742,6 +746,7 @@ fn modifier_to_gcc(arch: InlineAsmArch, reg: InlineAsmRegClass, modifier: Option
+         }
+         InlineAsmRegClass::Bpf(_) => unimplemented!(),
+         InlineAsmRegClass::Hexagon(_) => unimplemented!(),
++        InlineAsmRegClass::LoongArch(_) => unimplemented!(),
+         InlineAsmRegClass::Mips(_) => unimplemented!(),
+         InlineAsmRegClass::Nvptx(_) => unimplemented!(),
+         InlineAsmRegClass::PowerPC(_) => unimplemented!(),
+diff --git a/compiler/rustc_codegen_llvm/src/asm.rs b/compiler/rustc_codegen_llvm/src/asm.rs
+index 341a88824..95db9af9d 100644
+--- a/compiler/rustc_codegen_llvm/src/asm.rs
++++ b/compiler/rustc_codegen_llvm/src/asm.rs
+@@ -318,6 +318,7 @@ impl AsmBuilderMethods<'tcx> for Builder<'a, 'll, 'tcx> {
+                 InlineAsmArch::SpirV => {}
+                 InlineAsmArch::Wasm32 => {}
+                 InlineAsmArch::Bpf => {}
++                InlineAsmArch::LoongArch64 => {}
+             }
+         }
+         if !options.contains(InlineAsmOptions::NOMEM) {
+@@ -643,6 +644,8 @@ fn reg_to_llvm(reg: InlineAsmRegOrRegClass, layout: Option<&TyAndLayout<'tcx>>)
+             InlineAsmRegClass::SpirV(SpirVInlineAsmRegClass::reg) => {
+                 bug!("LLVM backend does not support SPIR-V")
+             }
++            InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::reg) => "r",
++            InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::freg) => "f",
+             InlineAsmRegClass::Err => unreachable!(),
+         }
+         .to_string(),
+@@ -722,6 +725,7 @@ fn modifier_to_llvm(
+         InlineAsmRegClass::SpirV(SpirVInlineAsmRegClass::reg) => {
+             bug!("LLVM backend does not support SPIR-V")
+         }
++        InlineAsmRegClass::LoongArch(_) => None,
+         InlineAsmRegClass::Err => unreachable!(),
+     }
+ }
+@@ -786,6 +790,8 @@ fn dummy_output_type(cx: &CodegenCx<'ll, 'tcx>, reg: InlineAsmRegClass) -> &'ll
+         InlineAsmRegClass::SpirV(SpirVInlineAsmRegClass::reg) => {
+             bug!("LLVM backend does not support SPIR-V")
+         }
++        InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::reg) => cx.type_i32(),
++        InlineAsmRegClass::LoongArch(LoongArchInlineAsmRegClass::freg) => cx.type_f32(),
+         InlineAsmRegClass::Err => unreachable!(),
+     }
+ }
+diff --git a/compiler/rustc_codegen_ssa/src/back/link.rs b/compiler/rustc_codegen_ssa/src/back/link.rs
+index cf1c60588..535689158 100644
+--- a/compiler/rustc_codegen_ssa/src/back/link.rs
++++ b/compiler/rustc_codegen_ssa/src/back/link.rs
+@@ -392,6 +392,7 @@ fn link_rlib<'a, B: ArchiveBuilder<'a>>(
+             "aarch64" => Architecture::Aarch64,
+             "x86" => Architecture::I386,
+             "s390x" => Architecture::S390x,
++            "loongarch64" => Architecture::LoongArch64,
+             "mips" => Architecture::Mips,
+             "mips64" => Architecture::Mips64,
+             "x86_64" => {
+@@ -447,6 +448,12 @@ fn link_rlib<'a, B: ArchiveBuilder<'a>>(
+             let mut file = Object::new(BinaryFormat::Elf, architecture, endianness);
+ 
+             match &sess.target.arch[..] {
++                // copied from `loongarch64-linux-gnu-gcc foo.c -c`
++                "loongarch64" => {
++                    let e_flags = elf::EF_LARCH_ABI_LP64D;
++                    file.flags = FileFlags::Elf { e_flags };
++                }
++
+                 // copied from `mipsel-linux-gnu-gcc foo.c -c` and
+                 // inspecting the resulting `e_flags` field.
+                 "mips" => {
+diff --git a/compiler/rustc_codegen_ssa/src/target_features.rs b/compiler/rustc_codegen_ssa/src/target_features.rs
+index 8d7e9612f..1bd2ea2f6 100644
+--- a/compiler/rustc_codegen_ssa/src/target_features.rs
++++ b/compiler/rustc_codegen_ssa/src/target_features.rs
+@@ -181,6 +181,11 @@ const HEXAGON_ALLOWED_FEATURES: &[(&str, Option<Symbol>)] = &[
+     ("hvx-length128b", Some(sym::hexagon_target_feature)),
+ ];
+ 
++const LOONGARCH64_ALLOWED_FEATURES: &[(&str, Option<Symbol>)] =&[
++    ("d", Some(sym::loongarch64_target_feature)),
++    ("f", Some(sym::loongarch64_target_feature)),
++];
++
+ const POWERPC_ALLOWED_FEATURES: &[(&str, Option<Symbol>)] = &[
+     ("altivec", Some(sym::powerpc_target_feature)),
+     ("power8-altivec", Some(sym::powerpc_target_feature)),
+@@ -225,6 +230,7 @@ pub fn all_known_features() -> impl Iterator<Item = (&'static str, Option<Symbol
+         .chain(RISCV_ALLOWED_FEATURES.iter())
+         .chain(WASM_ALLOWED_FEATURES.iter())
+         .chain(BPF_ALLOWED_FEATURES.iter())
++        .chain(LOONGARCH64_ALLOWED_FEATURES.iter())
+         .cloned()
+ }
+ 
+@@ -239,6 +245,7 @@ pub fn supported_target_features(sess: &Session) -> &'static [(&'static str, Opt
+         "riscv32" | "riscv64" => RISCV_ALLOWED_FEATURES,
+         "wasm32" | "wasm64" => WASM_ALLOWED_FEATURES,
+         "bpf" => BPF_ALLOWED_FEATURES,
++        "loongarch64" => LOONGARCH64_ALLOWED_FEATURES,
+         _ => &[],
+     }
+ }
+diff --git a/compiler/rustc_feature/src/active.rs b/compiler/rustc_feature/src/active.rs
+index 0ba764021..61e09607f 100644
+--- a/compiler/rustc_feature/src/active.rs
++++ b/compiler/rustc_feature/src/active.rs
+@@ -271,6 +271,7 @@ declare_features! (
+     (active, riscv_target_feature, "1.45.0", Some(44839), None),
+     (active, ermsb_target_feature, "1.49.0", Some(44839), None),
+     (active, bpf_target_feature, "1.54.0", Some(44839), None),
++    (active, loongarch64_target_feature, "1.57.0", Some(44839), None),
+ 
+     // -------------------------------------------------------------------------
+     // feature-group-end: actual feature gates (target features)
+diff --git a/compiler/rustc_llvm/build.rs b/compiler/rustc_llvm/build.rs
+index 36a6d2cc3..052da337d 100644
+--- a/compiler/rustc_llvm/build.rs
++++ b/compiler/rustc_llvm/build.rs
+@@ -76,6 +76,7 @@ fn main() {
+         "aarch64",
+         "amdgpu",
+         "avr",
++        "loongarch",
+         "m68k",
+         "mips",
+         "powerpc",
+diff --git a/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp b/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp
+index 87f423fb2..39e946511 100644
+--- a/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp
++++ b/compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp
+@@ -251,6 +251,12 @@ void LLVMRustAddLastExtensionPasses(
+ #define SUBTARGET_HEXAGON
+ #endif
+ 
++#ifdef LLVM_COMPONENT_LOONGARCH
++#define SUBTARGET_LOONGARCH SUBTARGET(LoongArch)
++#else
++#define SUBTARGET_LOONGARCH
++#endif
++
+ #define GEN_SUBTARGETS                                                         \
+   SUBTARGET_X86                                                                \
+   SUBTARGET_ARM                                                                \
+@@ -264,6 +270,7 @@ void LLVMRustAddLastExtensionPasses(
+   SUBTARGET_SPARC                                                              \
+   SUBTARGET_HEXAGON                                                            \
+   SUBTARGET_RISCV                                                              \
++  SUBTARGET_LOONGARCH                                                          \
+ 
+ #define SUBTARGET(x)                                                           \
+   namespace llvm {                                                             \
+diff --git a/compiler/rustc_llvm/src/lib.rs b/compiler/rustc_llvm/src/lib.rs
+index 6493bd91c..7fff370c7 100644
+--- a/compiler/rustc_llvm/src/lib.rs
++++ b/compiler/rustc_llvm/src/lib.rs
+@@ -102,6 +102,14 @@ pub fn initialize_available_targets() {
+         LLVMInitializeM68kAsmPrinter,
+         LLVMInitializeM68kAsmParser
+     );
++    init_target!(
++        llvm_component = "loongarch",
++        LLVMInitializeLoongArchTargetInfo,
++        LLVMInitializeLoongArchTarget,
++        LLVMInitializeLoongArchTargetMC,
++        LLVMInitializeLoongArchAsmPrinter,
++        LLVMInitializeLoongArchAsmParser
++    );
+     init_target!(
+         llvm_component = "mips",
+         LLVMInitializeMipsTargetInfo,
+diff --git a/compiler/rustc_span/src/symbol.rs b/compiler/rustc_span/src/symbol.rs
+index 16205ad1c..389cf6b28 100644
+--- a/compiler/rustc_span/src/symbol.rs
++++ b/compiler/rustc_span/src/symbol.rs
+@@ -785,6 +785,7 @@ symbols! {
+         log_syntax,
+         logf32,
+         logf64,
++        loongarch64_target_feature,
+         loop_break_value,
+         lt,
+         macro_at_most_once_rep,
+diff --git a/compiler/rustc_target/src/abi/call/loongarch.rs b/compiler/rustc_target/src/abi/call/loongarch.rs
+new file mode 100644
+index 000000000..2823fbf8a
+--- /dev/null
++++ b/compiler/rustc_target/src/abi/call/loongarch.rs
+@@ -0,0 +1,343 @@
++use crate::abi::call::{ArgAbi, ArgExtension, CastTarget, FnAbi, PassMode, Reg, RegKind, Uniform};
++use crate::abi::{self, Abi, FieldsShape, HasDataLayout, Size, TyAbiInterface, TyAndLayout};
++use crate::spec::HasTargetSpec;
++
++#[derive(Copy, Clone)]
++enum RegPassKind {
++    Float(Reg),
++    Integer(Reg),
++    Unknown,
++}
++
++#[derive(Copy, Clone)]
++enum FloatConv {
++    FloatPair(Reg, Reg),
++    Float(Reg),
++    MixedPair(Reg, Reg),
++}
++
++#[derive(Copy, Clone)]
++struct CannotUseFpConv;
++
++fn is_loongarch_aggregate<'a, Ty>(arg: &ArgAbi<'a, Ty>) -> bool {
++    match arg.layout.abi {
++        Abi::Vector { .. } => true,
++        _ => arg.layout.is_aggregate(),
++    }
++}
++
++fn should_use_fp_conv_helper<'a, Ty, C>(
++    cx: &C,
++    arg_layout: &TyAndLayout<'a, Ty>,
++    xlen: u64,
++    flen: u64,
++    field1_kind: &mut RegPassKind,
++    field2_kind: &mut RegPassKind,
++) -> Result<(), CannotUseFpConv>
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    match arg_layout.abi {
++        Abi::Scalar(scalar) => match scalar.value {
++            abi::Int(..) | abi::Pointer => {
++                if arg_layout.size.bits() > xlen {
++                    return Err(CannotUseFpConv);
++                }
++                match (*field1_kind, *field2_kind) {
++                    (RegPassKind::Unknown, _) => {
++                        *field1_kind = RegPassKind::Integer(Reg {
++                            kind: RegKind::Integer,
++                            size: arg_layout.size,
++                        });
++                    }
++                    (RegPassKind::Float(_), RegPassKind::Unknown) => {
++                        *field2_kind = RegPassKind::Integer(Reg {
++                            kind: RegKind::Integer,
++                            size: arg_layout.size,
++                        });
++                    }
++                    _ => return Err(CannotUseFpConv),
++                }
++            }
++            abi::F32 | abi::F64 => {
++                if arg_layout.size.bits() > flen {
++                    return Err(CannotUseFpConv);
++                }
++                match (*field1_kind, *field2_kind) {
++                    (RegPassKind::Unknown, _) => {
++                        *field1_kind =
++                            RegPassKind::Float(Reg { kind: RegKind::Float, size: arg_layout.size });
++                    }
++                    (_, RegPassKind::Unknown) => {
++                        *field2_kind =
++                            RegPassKind::Float(Reg { kind: RegKind::Float, size: arg_layout.size });
++                    }
++                    _ => return Err(CannotUseFpConv),
++                }
++            }
++        },
++        Abi::Vector { .. } | Abi::Uninhabited => return Err(CannotUseFpConv),
++        Abi::ScalarPair(..) | Abi::Aggregate { .. } => match arg_layout.fields {
++            FieldsShape::Primitive => {
++                unreachable!("aggregates can't have `FieldsShape::Primitive`")
++            }
++            FieldsShape::Union(_) => {
++                if !arg_layout.is_zst() {
++                    return Err(CannotUseFpConv);
++                }
++            }
++            FieldsShape::Array { count, .. } => {
++                for _ in 0..count {
++                    let elem_layout = arg_layout.field(cx, 0);
++                    should_use_fp_conv_helper(
++                        cx,
++                        &elem_layout,
++                        xlen,
++                        flen,
++                        field1_kind,
++                        field2_kind,
++                    )?;
++                }
++            }
++            FieldsShape::Arbitrary { .. } => {
++                match arg_layout.variants {
++                    abi::Variants::Multiple { .. } => return Err(CannotUseFpConv),
++                    abi::Variants::Single { .. } => (),
++                }
++                for i in arg_layout.fields.index_by_increasing_offset() {
++                    let field = arg_layout.field(cx, i);
++                    should_use_fp_conv_helper(cx, &field, xlen, flen, field1_kind, field2_kind)?;
++                }
++            }
++        },
++    }
++    Ok(())
++}
++
++fn should_use_fp_conv<'a, Ty, C>(
++    cx: &C,
++    arg: &TyAndLayout<'a, Ty>,
++    xlen: u64,
++    flen: u64,
++) -> Option<FloatConv>
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    let mut field1_kind = RegPassKind::Unknown;
++    let mut field2_kind = RegPassKind::Unknown;
++    if should_use_fp_conv_helper(cx, arg, xlen, flen, &mut field1_kind, &mut field2_kind).is_err() {
++        return None;
++    }
++    match (field1_kind, field2_kind) {
++        (RegPassKind::Integer(l), RegPassKind::Float(r)) => Some(FloatConv::MixedPair(l, r)),
++        (RegPassKind::Float(l), RegPassKind::Integer(r)) => Some(FloatConv::MixedPair(l, r)),
++        (RegPassKind::Float(l), RegPassKind::Float(r)) => Some(FloatConv::FloatPair(l, r)),
++        (RegPassKind::Float(f), RegPassKind::Unknown) => Some(FloatConv::Float(f)),
++        _ => None,
++    }
++}
++
++fn classify_ret<'a, Ty, C>(cx: &C, arg: &mut ArgAbi<'a, Ty>, xlen: u64, flen: u64) -> bool
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    if let Some(conv) = should_use_fp_conv(cx, &arg.layout, xlen, flen) {
++        match conv {
++            FloatConv::Float(f) => {
++                arg.cast_to(f);
++            }
++            FloatConv::FloatPair(l, r) => {
++                arg.cast_to(CastTarget::pair(l, r));
++            }
++            FloatConv::MixedPair(l, r) => {
++                arg.cast_to(CastTarget::pair(l, r));
++            }
++        }
++        return false;
++    }
++
++    let total = arg.layout.size;
++
++    // "Scalars wider than 2✕XLEN are passed by reference and are replaced in
++    // the argument list with the address."
++    // "Aggregates larger than 2✕XLEN bits are passed by reference and are
++    // replaced in the argument list with the address, as are C++ aggregates
++    // with nontrivial copy constructors, destructors, or vtables."
++    if total.bits() > 2 * xlen {
++        // We rely on the LLVM backend lowering code to lower passing a scalar larger than 2*XLEN.
++        if is_loongarch_aggregate(arg) {
++            arg.make_indirect();
++        }
++        return true;
++    }
++
++    let xlen_reg = match xlen {
++        32 => Reg::i32(),
++        64 => Reg::i64(),
++        _ => unreachable!("Unsupported XLEN: {}", xlen),
++    };
++    if is_loongarch_aggregate(arg) {
++        if total.bits() <= xlen {
++            arg.cast_to(xlen_reg);
++        } else {
++            arg.cast_to(Uniform { unit: xlen_reg, total: Size::from_bits(xlen * 2) });
++        }
++        return false;
++    }
++
++    // "When passed in registers, scalars narrower than XLEN bits are widened
++    // according to the sign of their type up to 32 bits, then sign-extended to
++    // XLEN bits."
++    extend_integer_width(arg, xlen);
++    false
++}
++
++fn classify_arg<'a, Ty, C>(
++    cx: &C,
++    arg: &mut ArgAbi<'a, Ty>,
++    xlen: u64,
++    flen: u64,
++    is_vararg: bool,
++    avail_gprs: &mut u64,
++    avail_fprs: &mut u64,
++) where
++    Ty: TyAbiInterface<'a, C> + Copy,
++{
++    if !is_vararg {
++        match should_use_fp_conv(cx, &arg.layout, xlen, flen) {
++            Some(FloatConv::Float(f)) if *avail_fprs >= 1 => {
++                *avail_fprs -= 1;
++                arg.cast_to(f);
++                return;
++            }
++            Some(FloatConv::FloatPair(l, r)) if *avail_fprs >= 2 => {
++                *avail_fprs -= 2;
++                arg.cast_to(CastTarget::pair(l, r));
++                return;
++            }
++            Some(FloatConv::MixedPair(l, r)) if *avail_fprs >= 1 && *avail_gprs >= 1 => {
++                *avail_gprs -= 1;
++                *avail_fprs -= 1;
++                arg.cast_to(CastTarget::pair(l, r));
++                return;
++            }
++            _ => (),
++        }
++    }
++
++    let total = arg.layout.size;
++    let align = arg.layout.align.abi.bits();
++
++    // "Scalars wider than 2✕XLEN are passed by reference and are replaced in
++    // the argument list with the address."
++    // "Aggregates larger than 2✕XLEN bits are passed by reference and are
++    // replaced in the argument list with the address, as are C++ aggregates
++    // with nontrivial copy constructors, destructors, or vtables."
++    if total.bits() > 2 * xlen {
++        // We rely on the LLVM backend lowering code to lower passing a scalar larger than 2*XLEN.
++        if is_loongarch_aggregate(arg) {
++            arg.make_indirect();
++        }
++        if *avail_gprs >= 1 {
++            *avail_gprs -= 1;
++        }
++        return;
++    }
++
++    let double_xlen_reg = match xlen {
++        32 => Reg::i64(),
++        64 => Reg::i128(),
++        _ => unreachable!("Unsupported XLEN: {}", xlen),
++    };
++
++    let xlen_reg = match xlen {
++        32 => Reg::i32(),
++        64 => Reg::i64(),
++        _ => unreachable!("Unsupported XLEN: {}", xlen),
++    };
++
++    if total.bits() > xlen {
++        let align_regs = align > xlen;
++        if is_loongarch_aggregate(arg) {
++            arg.cast_to(Uniform {
++                unit: if align_regs { double_xlen_reg } else { xlen_reg },
++                total: Size::from_bits(xlen * 2),
++            });
++        }
++        if align_regs && is_vararg {
++            *avail_gprs -= *avail_gprs % 2;
++        }
++        if *avail_gprs >= 2 {
++            *avail_gprs -= 2;
++        } else {
++            *avail_gprs = 0;
++        }
++        return;
++    } else if is_loongarch_aggregate(arg) {
++        arg.cast_to(xlen_reg);
++        if *avail_gprs >= 1 {
++            *avail_gprs -= 1;
++        }
++        return;
++    }
++
++    // "When passed in registers, scalars narrower than XLEN bits are widened
++    // according to the sign of their type up to 32 bits, then sign-extended to
++    // XLEN bits."
++    if *avail_gprs >= 1 {
++        extend_integer_width(arg, xlen);
++        *avail_gprs -= 1;
++    }
++}
++
++fn extend_integer_width<'a, Ty>(arg: &mut ArgAbi<'a, Ty>, xlen: u64) {
++    if let Abi::Scalar(scalar) = arg.layout.abi {
++        if let abi::Int(i, _) = scalar.value {
++            // 32-bit integers are always sign-extended
++            if i.size().bits() == 32 && xlen > 32 {
++                if let PassMode::Direct(ref mut attrs) = arg.mode {
++                    attrs.ext(ArgExtension::Sext);
++                    return;
++                }
++            }
++        }
++    }
++
++    arg.extend_integer_width_to(xlen);
++}
++
++pub fn compute_abi_info<'a, Ty, C>(cx: &C, fn_abi: &mut FnAbi<'a, Ty>)
++where
++    Ty: TyAbiInterface<'a, C> + Copy,
++    C: HasDataLayout + HasTargetSpec,
++{
++    let xlen = cx.data_layout().pointer_size.bits();
++    let flen = match &cx.target_spec().llvm_abiname[..] {
++        "ilp32d" | "lp64d" => 64,
++        "ilp32f" | "lp64f" => 32,
++        _ => 0,
++    };
++
++    let mut avail_gprs = 8;
++    let mut avail_fprs = 8;
++
++    if !fn_abi.ret.is_ignore() && classify_ret(cx, &mut fn_abi.ret, xlen, flen) {
++        avail_gprs -= 1;
++    }
++
++    for (i, arg) in fn_abi.args.iter_mut().enumerate() {
++        if arg.is_ignore() {
++            continue;
++        }
++        classify_arg(
++            cx,
++            arg,
++            xlen,
++            flen,
++            i >= fn_abi.fixed_count,
++            &mut avail_gprs,
++            &mut avail_fprs,
++        );
++    }
++}
++
+diff --git a/compiler/rustc_target/src/abi/call/mod.rs b/compiler/rustc_target/src/abi/call/mod.rs
+index d9eb299e2..362d0e6fe 100644
+--- a/compiler/rustc_target/src/abi/call/mod.rs
++++ b/compiler/rustc_target/src/abi/call/mod.rs
+@@ -9,6 +9,7 @@ mod arm;
+ mod avr;
+ mod bpf;
+ mod hexagon;
++mod loongarch;
+ mod m68k;
+ mod mips;
+ mod mips64;
+@@ -657,6 +658,7 @@ impl<'a, Ty> FnAbi<'a, Ty> {
+             "amdgpu" => amdgpu::compute_abi_info(cx, self),
+             "arm" => arm::compute_abi_info(cx, self),
+             "avr" => avr::compute_abi_info(self),
++            "loongarch64" => loongarch::compute_abi_info(cx, self),
+             "m68k" => m68k::compute_abi_info(self),
+             "mips" => mips::compute_abi_info(cx, self),
+             "mips64" => mips64::compute_abi_info(cx, self),
+diff --git a/compiler/rustc_target/src/asm/loongarch.rs b/compiler/rustc_target/src/asm/loongarch.rs
+new file mode 100644
+index 000000000..262d80eab
+--- /dev/null
++++ b/compiler/rustc_target/src/asm/loongarch.rs
+@@ -0,0 +1,130 @@
++use super::{InlineAsmArch, InlineAsmType};
++use rustc_macros::HashStable_Generic;
++use std::fmt;
++
++def_reg_class! {
++    LoongArch LoongArchInlineAsmRegClass {
++        reg,
++        freg,
++    }
++}
++
++impl LoongArchInlineAsmRegClass {
++    pub fn valid_modifiers(self, _arch: super::InlineAsmArch) -> &'static [char] {
++        &[]
++    }
++
++    pub fn suggest_class(self, _arch: InlineAsmArch, _ty: InlineAsmType) -> Option<Self> {
++        None
++    }
++
++    pub fn suggest_modifier(
++        self,
++        _arch: InlineAsmArch,
++        _ty: InlineAsmType,
++    ) -> Option<(char, &'static str)> {
++        None
++    }
++
++    pub fn default_modifier(self, _arch: InlineAsmArch) -> Option<(char, &'static str)> {
++        None
++    }
++
++    pub fn supported_types(
++        self,
++        arch: InlineAsmArch,
++    ) -> &'static [(InlineAsmType, Option<&'static str>)] {
++        match (self, arch) {
++            (Self::reg, InlineAsmArch::LoongArch64) => types! { _: I8, I16, I32, I64, F32, F64; },
++            (Self::reg, _) => types! { _: I8, I16, I32, F32; },
++            (Self::freg, _) => types! { _: F32, F64; },
++        }
++    }
++}
++
++// The reserved registers are taken from <https://github.com/llvm/llvm-project/blob/main/llvm/lib/Target/LoongArch/LoongArchRegisterInfo.cpp#79>
++def_regs! {
++    LoongArch LoongArchInlineAsmReg LoongArchInlineAsmRegClass {
++        r1: reg = ["$r1","$ra"],
++        r4: reg = ["$r4","$a0"],
++        r5: reg = ["$r5","$a1"],
++        r6: reg = ["$r6","$a2"],
++        r7: reg = ["$r7","$a3"],
++        r8: reg = ["$r8","$a4"],
++        r9: reg = ["$r9","$a5"],
++        r10: reg = ["$r10","$a6"],
++        r11: reg = ["$r11","$a7"],
++        r12: reg = ["$r12","$t0"],
++        r13: reg = ["$r13","$t1"],
++        r14: reg = ["$r14","$t2"],
++        r15: reg = ["$r15","$t3"],
++        r16: reg = ["$r16","$t4"],
++        r17: reg = ["$r17","$t5"],
++        r18: reg = ["$r18","$t6"],
++        r19: reg = ["$r19","$t7"],
++        r20: reg = ["$r20","$t8"],
++        r23: reg = ["$r23","$s0"],
++        r24: reg = ["$r24","$s1"],
++        r25: reg = ["$r25","$s2"],
++        r26: reg = ["$r26","$s3"],
++        r27: reg = ["$r27","$s4"],
++        r28: reg = ["$r28","$s5"],
++        r29: reg = ["$r29","$s6"],
++        r30: reg = ["$r30","$s7"],
++        f0: freg = ["$f0","$fa0"],
++        f1: freg = ["$f1","$fa1"],
++        f2: freg = ["$f2","$fa2"],
++        f3: freg = ["$f3","$fa3"],
++        f4: freg = ["$f4","$fa4"],
++        f5: freg = ["$f5","$fa5"],
++        f6: freg = ["$f6","$fa6"],
++        f7: freg = ["$f7","$fa7"],
++        f8: freg = ["$f8","$ft0"],
++        f9: freg = ["$f9","$ft1"],
++        f10: freg = ["$f10","$ft2"],
++        f11: freg = ["$f11","$ft3"],
++        f12: freg = ["$f12","$ft4"],
++        f13: freg = ["$f13","$ft5"],
++        f14: freg = ["$f14","$ft6"],
++        f15: freg = ["$f15","$ft7"],
++        f16: freg = ["$f16","$ft8"],
++        f17: freg = ["$f17","$ft9"],
++        f18: freg = ["$f18","$ft10"],
++        f19: freg = ["$f19","$ft11"],
++        f20: freg = ["$f20","$ft12"],
++        f21: freg = ["$f21","$ft13"],
++        f22: freg = ["$f22","$ft14"],
++        f23: freg = ["$f23","$ft15"],
++        f24: freg = ["$f24","$fs0"],
++        f25: freg = ["$f25","$fs1"],
++        f26: freg = ["$f26","$fs2"],
++        f27: freg = ["$f27","$fs3"],
++        f28: freg = ["$f28","$fs4"],
++        f29: freg = ["$f29","$fs5"],
++        f30: freg = ["$f30","$fs6"],
++        f31: freg = ["$f31","$fs7"],
++        #error = ["$r0", "$zero"] =>
++            "constant zero cannot be used as an operand for inline asm",
++        #error = ["$r2", "$tp"] =>
++            "reserved for TLS",
++        #error = ["$r3", "$sp"] =>
++            "the stack pointer cannot be used as an operand for inline asm",
++        #error = ["$r21", "$x"] =>
++            "reserved for ABI extension",
++        #error = ["$r22", "$fp"] =>
++            "the frame pointer cannot be used as an operand for inline asm",
++        #error = ["$r31", "$s8"] =>
++            "r31 is used internally by LLVM and cannot be used as an operand for inline asm",
++    }
++}
++
++impl LoongArchInlineAsmReg {
++    pub fn emit(
++        self,
++        out: &mut dyn fmt::Write,
++        _arch: InlineAsmArch,
++        _modifier: Option<char>,
++    ) -> fmt::Result {
++        out.write_str(self.name())
++    }
++}
+diff --git a/compiler/rustc_target/src/asm/mod.rs b/compiler/rustc_target/src/asm/mod.rs
+index 99699c50d..e23d23b77 100644
+--- a/compiler/rustc_target/src/asm/mod.rs
++++ b/compiler/rustc_target/src/asm/mod.rs
+@@ -150,6 +150,7 @@ mod aarch64;
+ mod arm;
+ mod bpf;
+ mod hexagon;
++mod loongarch;
+ mod mips;
+ mod nvptx;
+ mod powerpc;
+@@ -163,6 +164,7 @@ pub use aarch64::{AArch64InlineAsmReg, AArch64InlineAsmRegClass};
+ pub use arm::{ArmInlineAsmReg, ArmInlineAsmRegClass};
+ pub use bpf::{BpfInlineAsmReg, BpfInlineAsmRegClass};
+ pub use hexagon::{HexagonInlineAsmReg, HexagonInlineAsmRegClass};
++pub use loongarch::{LoongArchInlineAsmReg, LoongArchInlineAsmRegClass};
+ pub use mips::{MipsInlineAsmReg, MipsInlineAsmRegClass};
+ pub use nvptx::{NvptxInlineAsmReg, NvptxInlineAsmRegClass};
+ pub use powerpc::{PowerPCInlineAsmReg, PowerPCInlineAsmRegClass};
+@@ -190,6 +192,7 @@ pub enum InlineAsmArch {
+     SpirV,
+     Wasm32,
+     Bpf,
++    LoongArch64,
+ }
+ 
+ impl FromStr for InlineAsmArch {
+@@ -207,6 +210,7 @@ impl FromStr for InlineAsmArch {
+             "powerpc" => Ok(Self::PowerPC),
+             "powerpc64" => Ok(Self::PowerPC64),
+             "hexagon" => Ok(Self::Hexagon),
++            "loongarch64" => Ok(Self::LoongArch64),
+             "mips" => Ok(Self::Mips),
+             "mips64" => Ok(Self::Mips64),
+             "s390x" => Ok(Self::S390x),
+@@ -238,6 +242,7 @@ pub enum InlineAsmReg {
+     Nvptx(NvptxInlineAsmReg),
+     PowerPC(PowerPCInlineAsmReg),
+     Hexagon(HexagonInlineAsmReg),
++    LoongArch(LoongArchInlineAsmReg),
+     Mips(MipsInlineAsmReg),
+     S390x(S390xInlineAsmReg),
+     SpirV(SpirVInlineAsmReg),
+@@ -256,6 +261,7 @@ impl InlineAsmReg {
+             Self::RiscV(r) => r.name(),
+             Self::PowerPC(r) => r.name(),
+             Self::Hexagon(r) => r.name(),
++            Self::LoongArch(r) => r.name(),
+             Self::Mips(r) => r.name(),
+             Self::S390x(r) => r.name(),
+             Self::Bpf(r) => r.name(),
+@@ -271,6 +277,7 @@ impl InlineAsmReg {
+             Self::RiscV(r) => InlineAsmRegClass::RiscV(r.reg_class()),
+             Self::PowerPC(r) => InlineAsmRegClass::PowerPC(r.reg_class()),
+             Self::Hexagon(r) => InlineAsmRegClass::Hexagon(r.reg_class()),
++            Self::LoongArch(r) => InlineAsmRegClass::LoongArch(r.reg_class()),
+             Self::Mips(r) => InlineAsmRegClass::Mips(r.reg_class()),
+             Self::S390x(r) => InlineAsmRegClass::S390x(r.reg_class()),
+             Self::Bpf(r) => InlineAsmRegClass::Bpf(r.reg_class()),
+@@ -309,6 +316,9 @@ impl InlineAsmReg {
+             InlineAsmArch::Hexagon => {
+                 Self::Hexagon(HexagonInlineAsmReg::parse(arch, has_feature, target, &name)?)
+             }
++            InlineAsmArch::LoongArch64 => {
++                Self::LoongArch(LoongArchInlineAsmReg::parse(arch, has_feature, target, &name)?)
++            }
+             InlineAsmArch::Mips | InlineAsmArch::Mips64 => {
+                 Self::Mips(MipsInlineAsmReg::parse(arch, has_feature, target, &name)?)
+             }
+@@ -342,6 +352,7 @@ impl InlineAsmReg {
+             Self::RiscV(r) => r.emit(out, arch, modifier),
+             Self::PowerPC(r) => r.emit(out, arch, modifier),
+             Self::Hexagon(r) => r.emit(out, arch, modifier),
++            Self::LoongArch(r) => r.emit(out, arch, modifier),
+             Self::Mips(r) => r.emit(out, arch, modifier),
+             Self::S390x(r) => r.emit(out, arch, modifier),
+             Self::Bpf(r) => r.emit(out, arch, modifier),
+@@ -357,6 +368,7 @@ impl InlineAsmReg {
+             Self::RiscV(_) => cb(self),
+             Self::PowerPC(r) => r.overlapping_regs(|r| cb(Self::PowerPC(r))),
+             Self::Hexagon(r) => r.overlapping_regs(|r| cb(Self::Hexagon(r))),
++            Self::LoongArch(_) => cb(self),
+             Self::Mips(_) => cb(self),
+             Self::S390x(_) => cb(self),
+             Self::Bpf(r) => r.overlapping_regs(|r| cb(Self::Bpf(r))),
+@@ -385,6 +397,7 @@ pub enum InlineAsmRegClass {
+     Nvptx(NvptxInlineAsmRegClass),
+     PowerPC(PowerPCInlineAsmRegClass),
+     Hexagon(HexagonInlineAsmRegClass),
++    LoongArch(LoongArchInlineAsmRegClass),
+     Mips(MipsInlineAsmRegClass),
+     S390x(S390xInlineAsmRegClass),
+     SpirV(SpirVInlineAsmRegClass),
+@@ -404,6 +417,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.name(),
+             Self::PowerPC(r) => r.name(),
+             Self::Hexagon(r) => r.name(),
++            Self::LoongArch(r) => r.name(),
+             Self::Mips(r) => r.name(),
+             Self::S390x(r) => r.name(),
+             Self::SpirV(r) => r.name(),
+@@ -425,6 +439,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::Nvptx),
+             Self::PowerPC(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::PowerPC),
+             Self::Hexagon(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::Hexagon),
++            Self::LoongArch(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::LoongArch),
+             Self::Mips(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::Mips),
+             Self::S390x(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::S390x),
+             Self::SpirV(r) => r.suggest_class(arch, ty).map(InlineAsmRegClass::SpirV),
+@@ -453,6 +468,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.suggest_modifier(arch, ty),
+             Self::PowerPC(r) => r.suggest_modifier(arch, ty),
+             Self::Hexagon(r) => r.suggest_modifier(arch, ty),
++            Self::LoongArch(r) => r.suggest_modifier(arch, ty),
+             Self::Mips(r) => r.suggest_modifier(arch, ty),
+             Self::S390x(r) => r.suggest_modifier(arch, ty),
+             Self::SpirV(r) => r.suggest_modifier(arch, ty),
+@@ -477,6 +493,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.default_modifier(arch),
+             Self::PowerPC(r) => r.default_modifier(arch),
+             Self::Hexagon(r) => r.default_modifier(arch),
++            Self::LoongArch(r) => r.default_modifier(arch),
+             Self::Mips(r) => r.default_modifier(arch),
+             Self::S390x(r) => r.default_modifier(arch),
+             Self::SpirV(r) => r.default_modifier(arch),
+@@ -500,6 +517,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.supported_types(arch),
+             Self::PowerPC(r) => r.supported_types(arch),
+             Self::Hexagon(r) => r.supported_types(arch),
++            Self::LoongArch(r) => r.supported_types(arch),
+             Self::Mips(r) => r.supported_types(arch),
+             Self::S390x(r) => r.supported_types(arch),
+             Self::SpirV(r) => r.supported_types(arch),
+@@ -524,6 +542,7 @@ impl InlineAsmRegClass {
+                 Self::PowerPC(PowerPCInlineAsmRegClass::parse(arch, name)?)
+             }
+             InlineAsmArch::Hexagon => Self::Hexagon(HexagonInlineAsmRegClass::parse(arch, name)?),
++            InlineAsmArch::LoongArch64 => Self::LoongArch(LoongArchInlineAsmRegClass::parse(arch, name)?),
+             InlineAsmArch::Mips | InlineAsmArch::Mips64 => {
+                 Self::Mips(MipsInlineAsmRegClass::parse(arch, name)?)
+             }
+@@ -545,6 +564,7 @@ impl InlineAsmRegClass {
+             Self::Nvptx(r) => r.valid_modifiers(arch),
+             Self::PowerPC(r) => r.valid_modifiers(arch),
+             Self::Hexagon(r) => r.valid_modifiers(arch),
++            Self::LoongArch(r) => r.valid_modifiers(arch),
+             Self::Mips(r) => r.valid_modifiers(arch),
+             Self::S390x(r) => r.valid_modifiers(arch),
+             Self::SpirV(r) => r.valid_modifiers(arch),
+@@ -710,6 +730,11 @@ pub fn allocatable_registers(
+             hexagon::fill_reg_map(arch, has_feature, target, &mut map);
+             map
+         }
++        InlineAsmArch::LoongArch64 => {
++            let mut map = loongarch::regclass_map();
++            loongarch::fill_reg_map(arch, has_feature, target, &mut map);
++            map
++        }
+         InlineAsmArch::Mips | InlineAsmArch::Mips64 => {
+             let mut map = mips::regclass_map();
+             mips::fill_reg_map(arch, has_feature, target, &mut map);
+diff --git a/compiler/rustc_target/src/spec/loongarch64_unknown_linux_gnuf64.rs b/compiler/rustc_target/src/spec/loongarch64_unknown_linux_gnuf64.rs
+new file mode 100644
+index 000000000..7c6ac9e15
+--- /dev/null
++++ b/compiler/rustc_target/src/spec/loongarch64_unknown_linux_gnuf64.rs
+@@ -0,0 +1,19 @@
++use crate::spec::{CodeModel, Target, TargetOptions};
++  
++pub fn target() -> Target {
++    Target {
++        llvm_target: "loongarch64-unknown-linux-gnuf64".into(),
++        pointer_width: 64,
++        data_layout: "e-m:e-i8:8:32-i16:16:32-i64:64-n32:64-S128".into(),
++        arch: "loongarch64".into(),
++        options: TargetOptions {
++            code_model: Some(CodeModel::Medium),
++//            cpu: "generic-la64".into(),
++            cpu: "la464".into(),
++            features: "+d".into(),
++            llvm_abiname: "lp64d".into(),
++            max_atomic_width: Some(64),
++            ..super::linux_gnu_base::opts()
++        },
++    }
++}
+\ No newline at end of file
+diff --git a/compiler/rustc_target/src/spec/mod.rs b/compiler/rustc_target/src/spec/mod.rs
+index ff5dfa3f7..772cc4274 100644
+--- a/compiler/rustc_target/src/spec/mod.rs
++++ b/compiler/rustc_target/src/spec/mod.rs
+@@ -790,6 +790,7 @@ supported_targets! {
+     ("mips64-unknown-linux-muslabi64", mips64_unknown_linux_muslabi64),
+     ("mips64el-unknown-linux-muslabi64", mips64el_unknown_linux_muslabi64),
+     ("hexagon-unknown-linux-musl", hexagon_unknown_linux_musl),
++    ("loongarch64-unknown-linux-gnuf64", loongarch64_unknown_linux_gnuf64),
+ 
+     ("mips-unknown-linux-uclibc", mips_unknown_linux_uclibc),
+     ("mipsel-unknown-linux-uclibc", mipsel_unknown_linux_uclibc),
+diff --git a/compiler/rustc_typeck/src/collect.rs b/compiler/rustc_typeck/src/collect.rs
+index df7f2aea9..ee3835f68 100644
+--- a/compiler/rustc_typeck/src/collect.rs
++++ b/compiler/rustc_typeck/src/collect.rs
+@@ -2602,6 +2602,7 @@ fn from_target_feature(
+                 Some(sym::arm_target_feature) => rust_features.arm_target_feature,
+                 Some(sym::aarch64_target_feature) => rust_features.aarch64_target_feature,
+                 Some(sym::hexagon_target_feature) => rust_features.hexagon_target_feature,
++                Some(sym::loongarch64_target_feature) => rust_features.loongarch64_target_feature,
+                 Some(sym::powerpc_target_feature) => rust_features.powerpc_target_feature,
+                 Some(sym::mips_target_feature) => rust_features.mips_target_feature,
+                 Some(sym::riscv_target_feature) => rust_features.riscv_target_feature,
+diff --git a/library/core/src/lib.rs b/library/core/src/lib.rs
+index 13b80c05d..1560a80cb 100644
+--- a/library/core/src/lib.rs
++++ b/library/core/src/lib.rs
+@@ -197,6 +197,7 @@
+ #![feature(cmpxchg16b_target_feature)]
+ #![feature(f16c_target_feature)]
+ #![feature(hexagon_target_feature)]
++#![feature(loongarch64_target_feature)]
+ #![feature(mips_target_feature)]
+ #![feature(powerpc_target_feature)]
+ #![feature(rtm_target_feature)]
+diff --git a/library/panic_unwind/src/gcc.rs b/library/panic_unwind/src/gcc.rs
+index 9d6ede73e..f7a2ce8cf 100644
+--- a/library/panic_unwind/src/gcc.rs
++++ b/library/panic_unwind/src/gcc.rs
+@@ -123,6 +123,9 @@ const UNWIND_DATA_REG: (i32, i32) = (0, 1); // R0, R1
+ #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+ const UNWIND_DATA_REG: (i32, i32) = (10, 11); // x10, x11
+ 
++#[cfg(target_arch = "loongarch64")]
++const UNWIND_DATA_REG: (i32, i32) = (4, 5); // A0, A1
++
+ // The following code is based on GCC's C and C++ personality routines.  For reference, see:
+ // https://github.com/gcc-mirror/gcc/blob/master/libstdc++-v3/libsupc++/eh_personality.cc
+ // https://github.com/gcc-mirror/gcc/blob/trunk/libgcc/unwind-c.c
+diff --git a/library/std/src/env.rs b/library/std/src/env.rs
+index 40b46878c..748874eea 100644
+--- a/library/std/src/env.rs
++++ b/library/std/src/env.rs
+@@ -879,6 +879,7 @@ pub mod consts {
+     /// - x86_64
+     /// - arm
+     /// - aarch64
++    /// - loongarch64
+     /// - m68k
+     /// - mips
+     /// - mips64
+diff --git a/library/std/src/os/linux/raw.rs b/library/std/src/os/linux/raw.rs
+index cd92dcabd..1a38e97de 100644
+--- a/library/std/src/os/linux/raw.rs
++++ b/library/std/src/os/linux/raw.rs
+@@ -232,6 +232,7 @@ mod arch {
+ }
+ 
+ #[cfg(any(
++    target_arch = "loongarch64",
+     target_arch = "mips64",
+     target_arch = "s390x",
+     target_arch = "sparc64",
+diff --git a/library/std/src/sys/common/alloc.rs b/library/std/src/sys/common/alloc.rs
+index 576667c01..5ace3e48a 100644
+--- a/library/std/src/sys/common/alloc.rs
++++ b/library/std/src/sys/common/alloc.rs
+@@ -24,6 +24,7 @@ pub const MIN_ALIGN: usize = 8;
+     target_arch = "mips64",
+     target_arch = "s390x",
+     target_arch = "sparc64",
++    target_arch = "loongarch64",
+     target_arch = "riscv64"
+ )))]
+ pub const MIN_ALIGN: usize = 16;
+diff --git a/library/unwind/src/libunwind.rs b/library/unwind/src/libunwind.rs
+index 5e15fe75a..11f1c34c4 100644
+--- a/library/unwind/src/libunwind.rs
++++ b/library/unwind/src/libunwind.rs
+@@ -66,6 +66,9 @@ pub const unwinder_private_data_size: usize = 20;
+ #[cfg(all(target_arch = "hexagon", target_os = "linux"))]
+ pub const unwinder_private_data_size: usize = 35;
+ 
++#[cfg(target_arch = "loongarch64")]
++pub const unwinder_private_data_size: usize = 2;
++
+ #[repr(C)]
+ pub struct _Unwind_Exception {
+     pub exception_class: _Unwind_Exception_Class,
+diff --git a/src/bootstrap/bootstrap.py b/src/bootstrap/bootstrap.py
+index 0170be967..952b77768 100644
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -277,6 +277,7 @@ def default_build_triple(verbose):
+         'i486': 'i686',
+         'i686': 'i686',
+         'i786': 'i686',
++        'loongarch64': 'loongarch64',
+         'm68k': 'm68k',
+         'powerpc': 'powerpc',
+         'powerpc64': 'powerpc64',
+diff --git a/src/bootstrap/native.rs b/src/bootstrap/native.rs
+index 27c9bb250..4bfb4e45b 100644
+--- a/src/bootstrap/native.rs
++++ b/src/bootstrap/native.rs
+@@ -158,7 +158,7 @@ impl Step for Llvm {
+         let llvm_targets = match &builder.config.llvm_targets {
+             Some(s) => s,
+             None => {
+-                "AArch64;ARM;BPF;Hexagon;MSP430;Mips;NVPTX;PowerPC;RISCV;\
++                "AArch64;ARM;BPF;Hexagon;LoongArch;MSP430;Mips;NVPTX;PowerPC;RISCV;\
+                      Sparc;SystemZ;WebAssembly;X86"
+             }
+         };
+diff --git a/src/ci/github-actions/ci.yml b/src/ci/github-actions/ci.yml
+index eb16cf3c7..775f9cbf0 100644
+--- a/src/ci/github-actions/ci.yml
++++ b/src/ci/github-actions/ci.yml
+@@ -335,6 +335,9 @@ jobs:
+           - name: dist-i686-linux
+             <<: *job-linux-xl
+ 
++          - name: dist-loongarch64-linux
++            <<: *job-linux-xl
++
+           - name: dist-mips-linux
+             <<: *job-linux-xl
+ 
+diff --git a/src/doc/rustc/src/platform-support.md b/src/doc/rustc/src/platform-support.md
+index bbeab598f..3cb8ecaed 100644
+--- a/src/doc/rustc/src/platform-support.md
++++ b/src/doc/rustc/src/platform-support.md
+@@ -83,6 +83,7 @@ target | notes
+ `arm-unknown-linux-gnueabi` | ARMv6 Linux (kernel 3.2, glibc 2.17)
+ `arm-unknown-linux-gnueabihf` | ARMv6 Linux, hardfloat (kernel 3.2, glibc 2.17)
+ `armv7-unknown-linux-gnueabihf` | ARMv7 Linux, hardfloat (kernel 3.2, glibc 2.17)
++`loongarch64-unknown-linux-gnuf64` | LOONGARCH64 Linux (kernel 4.19, glibc 2.28)
+ `mips-unknown-linux-gnu` | MIPS Linux (kernel 4.4, glibc 2.23)
+ `mips64-unknown-linux-gnuabi64` | MIPS64 Linux, n64 ABI (kernel 4.4, glibc 2.23)
+ `mips64el-unknown-linux-gnuabi64` | MIPS64 (LE) Linux, n64 ABI (kernel 4.4, glibc 2.23)
+diff --git a/src/librustdoc/clean/cfg.rs b/src/librustdoc/clean/cfg.rs
+index 9b5ca0684..55b856c6c 100644
+--- a/src/librustdoc/clean/cfg.rs
++++ b/src/librustdoc/clean/cfg.rs
+@@ -491,6 +491,7 @@ impl<'a> fmt::Display for Display<'a> {
+                         "aarch64" => "AArch64",
+                         "arm" => "ARM",
+                         "asmjs" => "JavaScript",
++                        "loongarch64" => "LoongArch64",
+                         "m68k" => "M68k",
+                         "mips" => "MIPS",
+                         "mips64" => "MIPS-64",
+diff --git a/src/test/assembly/asm/loongarch-types.rs b/src/test/assembly/asm/loongarch-types.rs
+new file mode 100644
+index 000000000..34973b942
+--- /dev/null
++++ b/src/test/assembly/asm/loongarch-types.rs
+@@ -0,0 +1,194 @@
++// min-llvm-version: 10.0.1
++// assembly-output: emit-asm
++// compile-flags: --target loongarch64-unknown-linux-gnuf64
++// needs-llvm-components: loongarch
++
++#![feature(no_core, lang_items, rustc_attrs)]
++#![crate_type = "rlib"]
++#![no_core]
++#![allow(asm_sub_register)]
++
++#[rustc_builtin_macro]
++macro_rules! asm {
++    () => {};
++}
++#[rustc_builtin_macro]
++macro_rules! concat {
++    () => {};
++}
++#[rustc_builtin_macro]
++macro_rules! stringify {
++    () => {};
++}
++
++#[lang = "sized"]
++trait Sized {}
++#[lang = "copy"]
++trait Copy {}
++
++type ptr = *const i32;
++
++impl Copy for i8 {}
++impl Copy for i16 {}
++impl Copy for i32 {}
++impl Copy for i64 {}
++impl Copy for f32 {}
++impl Copy for f64 {}
++impl Copy for ptr {}
++extern "C" {
++    fn extern_func();
++    static extern_static: u8;
++}
++
++// Hack to avoid function merging
++extern "Rust" {
++    fn dont_merge(s: &str);
++}
++
++// CHECK-LABEL: sym_fn:
++// CHECK: #APP
++// CHECK: la.got $r12, extern_func
++// CHECK: #NO_APP
++#[no_mangle]
++pub unsafe fn sym_fn() {
++    asm!("la.got $r12, {}", sym extern_func);
++}
++
++// CHECK-LABEL: sym_static:
++// CHECK: #APP
++// CHECK: la.got $r12, extern_static
++// CHECK: #NO_APP
++#[no_mangle]
++pub unsafe fn sym_static() {
++    asm!("la.got $r12, {}", sym extern_static);
++}
++
++macro_rules! check { ($func:ident, $ty:ty, $class:ident, $mov:literal) => {
++    #[no_mangle]
++    pub unsafe fn $func(x: $ty) -> $ty {
++        dont_merge(stringify!($func));
++
++        let y;
++        asm!(concat!($mov," {}, {}"), out($class) y, in($class) x);
++        y
++    }
++};}
++
++macro_rules! check_reg { ($func:ident, $ty:ty, $reg:tt, $mov:literal) => {
++    #[no_mangle]
++    pub unsafe fn $func(x: $ty) -> $ty {
++        dont_merge(stringify!($func));
++
++        let y;
++        asm!(concat!($mov, " ", $reg, ", ", $reg), lateout($reg) y, in($reg) x);
++        y
++    }
++};}
++
++// CHECK-LABEL: reg_i8:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_i8, i8, reg, "move");
++
++// CHECK-LABEL: reg_i16:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_i16, i16, reg, "move");
++
++// CHECK-LABEL: reg_i32:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_i32, i32, reg, "move");
++
++// CHECK-LABEL: reg_f32:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_f32, f32, reg, "move");
++
++// CHECK-LABEL: reg_i64:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_i64, i64, reg, "move");
++
++// CHECK-LABEL: reg_f64:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_f64, f64, reg, "move");
++
++// CHECK-LABEL: reg_ptr:
++// CHECK: #APP
++// CHECK: move $r{{[0-9]+}}, $r{{[0-9]+}}
++// CHECK: #NO_APP
++check!(reg_ptr, ptr, reg, "move");
++
++// CHECK-LABEL: freg_f32:
++// CHECK: #APP
++// CHECK: fmov.s $f{{[0-9]+}}, $f{{[0-9]+}}
++// CHECK: #NO_APP
++check!(freg_f32, f32, freg, "fmov.s");
++
++// CHECK-LABEL: freg_f64:
++// CHECK: #APP
++// CHECK: fmov.d $f{{[0-9]+}}, $f{{[0-9]+}}
++// CHECK: #NO_APP
++check!(freg_f64, f64, freg, "fmov.d");
++
++// CHECK-LABEL: r4_i8:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_i8, i8, "$r4", "move");
++
++// CHECK-LABEL: r4_i16:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_i16, i16, "$r4", "move");
++
++// CHECK-LABEL: r4_i32:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_i32, i32, "$r4", "move");
++
++// CHECK-LABEL: r4_f32:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_f32, f32, "$r4", "move");
++
++// CHECK-LABEL: r4_i64:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_i64, i64, "$r4", "move");
++
++// CHECK-LABEL: r4_f64:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_f64, f64, "$r4", "move");
++
++// CHECK-LABEL: r4_ptr:
++// CHECK: #APP
++// CHECK: move $r4, $r4
++// CHECK: #NO_APP
++check_reg!(r4_ptr, ptr, "$r4", "move");
++
++// CHECK-LABEL: f0_f32:
++// CHECK: #APP
++// CHECK: fmov.s $f{{[0-9]+}}, $f{{[0-9]+}}
++// CHECK: #NO_APP
++check_reg!(f0_f32, f32, "$f0", "fmov.s");
++
++// CHECK-LABEL: f0_f64:
++// CHECK: #APP
++// CHECK: fmov.d $f{{[0-9]+}}, $f{{[0-9]+}}
++// CHECK: #NO_APP
++check_reg!(f0_f64, f64, "$f0", "fmov.d");
+diff --git a/src/test/codegen/abi-main-signature-16bit-c-int.rs b/src/test/codegen/abi-main-signature-16bit-c-int.rs
+index 4ed491dfb..1b79aa221 100644
+--- a/src/test/codegen/abi-main-signature-16bit-c-int.rs
++++ b/src/test/codegen/abi-main-signature-16bit-c-int.rs
+@@ -6,6 +6,7 @@
+ // ignore-arm
+ // ignore-asmjs
+ // ignore-hexagon
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+diff --git a/src/test/codegen/call-llvm-intrinsics.rs b/src/test/codegen/call-llvm-intrinsics.rs
+index 998099c23..77a11ad9f 100644
+--- a/src/test/codegen/call-llvm-intrinsics.rs
++++ b/src/test/codegen/call-llvm-intrinsics.rs
+@@ -1,6 +1,7 @@
+ // compile-flags: -C no-prepopulate-passes
+ 
+ // ignore-riscv64
++// ignore-loongarch64
+ 
+ #![feature(link_llvm_intrinsics)]
+ #![crate_type = "lib"]
+diff --git a/src/test/codegen/fastcall-inreg.rs b/src/test/codegen/fastcall-inreg.rs
+index adbeae454..deb353d0c 100644
+--- a/src/test/codegen/fastcall-inreg.rs
++++ b/src/test/codegen/fastcall-inreg.rs
+@@ -10,6 +10,7 @@
+ // ignore-bpfel
+ // ignore-bpfeb
+ // ignore-hexagon
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-msp430
+diff --git a/src/test/codegen/global_asm.rs b/src/test/codegen/global_asm.rs
+index 57d8aeb16..ac235e02c 100644
+--- a/src/test/codegen/global_asm.rs
++++ b/src/test/codegen/global_asm.rs
+@@ -6,6 +6,7 @@
+ // ignore-bpfel
+ // ignore-bpfeb
+ // ignore-hexagon
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-msp430
+diff --git a/src/test/codegen/global_asm_include.rs b/src/test/codegen/global_asm_include.rs
+index 44402619c..9a5daa3f3 100644
+--- a/src/test/codegen/global_asm_include.rs
++++ b/src/test/codegen/global_asm_include.rs
+@@ -6,6 +6,7 @@
+ // ignore-bpfel
+ // ignore-bpfeb
+ // ignore-hexagon
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-msp430
+diff --git a/src/test/codegen/global_asm_x2.rs b/src/test/codegen/global_asm_x2.rs
+index d632d0dde..67f14e708 100644
+--- a/src/test/codegen/global_asm_x2.rs
++++ b/src/test/codegen/global_asm_x2.rs
+@@ -6,6 +6,7 @@
+ // ignore-bpfel
+ // ignore-bpfeb
+ // ignore-hexagon
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-msp430
+diff --git a/src/test/codegen/loongarch-abi/call-llvm-intrinsics.rs b/src/test/codegen/loongarch-abi/call-llvm-intrinsics.rs
+new file mode 100644
+index 000000000..74aee760d
+--- /dev/null
++++ b/src/test/codegen/loongarch-abi/call-llvm-intrinsics.rs
+@@ -0,0 +1,30 @@
++// compile-flags: -C no-prepopulate-passes
++
++// only-loongarch64
++
++#![feature(link_llvm_intrinsics)]
++#![crate_type = "lib"]
++
++struct A;
++
++impl Drop for A {
++    fn drop(&mut self) {
++        println!("A");
++    }
++}
++
++extern "C" {
++    #[link_name = "llvm.sqrt.f32"]
++    fn sqrt(x: f32) -> f32;
++}
++
++pub fn do_call() {
++    let _a = A;
++
++    unsafe {
++        // Ensure that we `call` LLVM intrinsics instead of trying to `invoke` them
++        // CHECK: store float 4.000000e+00, float* %{{.}}, align 4
++        // CHECK: call float @llvm.sqrt.f32(float %{{.}}
++        sqrt(4.0);
++    }
++}
+diff --git a/src/test/codegen/repr-transparent-aggregates-1.rs b/src/test/codegen/repr-transparent-aggregates-1.rs
+index 3017adb44..913ca18db 100644
+--- a/src/test/codegen/repr-transparent-aggregates-1.rs
++++ b/src/test/codegen/repr-transparent-aggregates-1.rs
+@@ -4,6 +4,7 @@
+ // min-system-llvm-version: 12.0
+ // ignore-arm
+ // ignore-aarch64
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+diff --git a/src/test/codegen/repr-transparent-aggregates-2.rs b/src/test/codegen/repr-transparent-aggregates-2.rs
+index 429d760b4..901d3031f 100644
+--- a/src/test/codegen/repr-transparent-aggregates-2.rs
++++ b/src/test/codegen/repr-transparent-aggregates-2.rs
+@@ -5,6 +5,7 @@
+ // ignore-aarch64
+ // ignore-emscripten
+ // ignore-mips64
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/codegen/repr-transparent.rs b/src/test/codegen/repr-transparent.rs
+index 7add522c1..2549bdc80 100644
+--- a/src/test/codegen/repr-transparent.rs
++++ b/src/test/codegen/repr-transparent.rs
+@@ -2,6 +2,7 @@
+ 
+ // ignore-riscv64 riscv64 has an i128 type used with test_Vector
+ // see codegen/riscv-abi for riscv functiona call tests
++// ignore-loongarch64
+ 
+ #![crate_type="lib"]
+ #![feature(repr_simd, transparent_unions)]
+diff --git a/src/test/codegen/stack-probes.rs b/src/test/codegen/stack-probes.rs
+index 9bd351df3..d2bf8a1ba 100644
+--- a/src/test/codegen/stack-probes.rs
++++ b/src/test/codegen/stack-probes.rs
+@@ -1,5 +1,6 @@
+ // ignore-arm
+ // ignore-aarch64
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+diff --git a/src/test/run-make-fulldeps/atomic-lock-free/Makefile b/src/test/run-make-fulldeps/atomic-lock-free/Makefile
+index 9e8b4fabf..7091371c1 100644
+--- a/src/test/run-make-fulldeps/atomic-lock-free/Makefile
++++ b/src/test/run-make-fulldeps/atomic-lock-free/Makefile
+@@ -25,6 +25,10 @@ ifeq ($(filter aarch64,$(LLVM_COMPONENTS)),aarch64)
+ 	$(RUSTC) --target=aarch64-unknown-linux-gnu atomic_lock_free.rs
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+ endif
++ifeq ($(filter loongarch64,$(LLVM_COMPONENTS)),loongarch64)
++	$(RUSTC) --target=loongarch64-unknown-linux-gnuf64 atomic_lock_free.rs
++	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
++endif
+ ifeq ($(filter mips,$(LLVM_COMPONENTS)),mips)
+ 	$(RUSTC) --target=mips-unknown-linux-gnu atomic_lock_free.rs
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+diff --git a/src/test/ui/abi/stack-probes-lto.rs b/src/test/ui/abi/stack-probes-lto.rs
+index 90df1f3f5..075a1a124 100644
+--- a/src/test/ui/abi/stack-probes-lto.rs
++++ b/src/test/ui/abi/stack-probes-lto.rs
+@@ -1,6 +1,7 @@
+ // run-pass
+ // ignore-arm
+ // ignore-aarch64
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+diff --git a/src/test/ui/borrowck/borrowck-asm.rs b/src/test/ui/borrowck/borrowck-asm.rs
+index 0d202c1b4..46a7c5f7b 100644
+--- a/src/test/ui/borrowck/borrowck-asm.rs
++++ b/src/test/ui/borrowck/borrowck-asm.rs
+@@ -6,6 +6,7 @@
+ // ignore-riscv64
+ // ignore-sparc
+ // ignore-sparc64
++// ignore-loongarch64
+ 
+ #![feature(llvm_asm)]
+ #![allow(deprecated)] // llvm_asm!
+@@ -14,6 +15,7 @@
+             target_arch = "x86_64",
+             target_arch = "arm",
+             target_arch = "aarch64",
++            target_arch = "loongarch64",
+             target_arch = "mips",
+             target_arch = "mips64"))]
+ mod test_cases {
+diff --git a/src/test/ui/cfg/conditional-compile-arch.rs b/src/test/ui/cfg/conditional-compile-arch.rs
+index 7de561df1..34172b8c9 100644
+--- a/src/test/ui/cfg/conditional-compile-arch.rs
++++ b/src/test/ui/cfg/conditional-compile-arch.rs
+@@ -13,6 +13,9 @@ pub fn main() { }
+ #[cfg(target_arch = "aarch64")]
+ pub fn main() { }
+ 
++#[cfg(target_arch = "loongarch64")]
++pub fn main() { }
++
+ #[cfg(target_arch = "mips")]
+ pub fn main() { }
+ 
+diff --git a/src/test/ui/empty_global_asm.rs b/src/test/ui/empty_global_asm.rs
+index efbe2b2eb..0675da123 100644
+--- a/src/test/ui/empty_global_asm.rs
++++ b/src/test/ui/empty_global_asm.rs
+@@ -14,6 +14,9 @@ global_asm!("");
+ #[cfg(target_arch = "aarch64")]
+ global_asm!("");
+ 
++#[cfg(target_arch = "loongarch64")]
++global_asm!("");
++
+ #[cfg(target_arch = "mips")]
+ global_asm!("");
+ 
+diff --git a/src/test/ui/llvm-asm/llvm-asm-bad-clobber.rs b/src/test/ui/llvm-asm/llvm-asm-bad-clobber.rs
+index c15009f15..a4e594b45 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-bad-clobber.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-bad-clobber.rs
+@@ -3,6 +3,7 @@
+ // ignore-aarch64
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/ui/llvm-asm/llvm-asm-in-bad-modifier.rs b/src/test/ui/llvm-asm/llvm-asm-in-bad-modifier.rs
+index 1bccb0b73..9e57c1453 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-in-bad-modifier.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-in-bad-modifier.rs
+@@ -1,5 +1,6 @@
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/ui/llvm-asm/llvm-asm-misplaced-option.rs b/src/test/ui/llvm-asm/llvm-asm-misplaced-option.rs
+index 04f0972ed..a8d50f992 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-misplaced-option.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-misplaced-option.rs
+@@ -2,6 +2,7 @@
+ // ignore-android
+ // ignore-arm
+ // ignore-aarch64
++// ignore-loongarch64
+ // ignore-s390x
+ // ignore-emscripten
+ // ignore-powerpc
+diff --git a/src/test/ui/llvm-asm/llvm-asm-out-assign-imm.rs b/src/test/ui/llvm-asm/llvm-asm-out-assign-imm.rs
+index 7f51b50f2..da3838a0c 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-out-assign-imm.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-out-assign-imm.rs
+@@ -1,5 +1,6 @@
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/ui/llvm-asm/llvm-asm-out-no-modifier.rs b/src/test/ui/llvm-asm/llvm-asm-out-no-modifier.rs
+index c74d156cf..2f6a402b9 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-out-no-modifier.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-out-no-modifier.rs
+@@ -1,5 +1,6 @@
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/ui/llvm-asm/llvm-asm-out-read-uninit.rs b/src/test/ui/llvm-asm/llvm-asm-out-read-uninit.rs
+index 161add7e5..255187930 100644
+--- a/src/test/ui/llvm-asm/llvm-asm-out-read-uninit.rs
++++ b/src/test/ui/llvm-asm/llvm-asm-out-read-uninit.rs
+@@ -1,5 +1,6 @@
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+diff --git a/src/test/ui/target-feature/gate.rs b/src/test/ui/target-feature/gate.rs
+index 7cdf40424..d959168c5 100644
+--- a/src/test/ui/target-feature/gate.rs
++++ b/src/test/ui/target-feature/gate.rs
+@@ -2,6 +2,7 @@
+ // ignore-aarch64
+ // ignore-wasm
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+@@ -28,6 +29,7 @@
+ // gate-test-riscv_target_feature
+ // gate-test-ermsb_target_feature
+ // gate-test-bpf_target_feature
++// gate-test-loongarch64_target_feature
+ 
+ #[target_feature(enable = "avx512bw")]
+ //~^ ERROR: currently unstable
+diff --git a/src/test/ui/target-feature/invalid-attribute.rs b/src/test/ui/target-feature/invalid-attribute.rs
+index 5ea782155..a091ad8fe 100644
+--- a/src/test/ui/target-feature/invalid-attribute.rs
++++ b/src/test/ui/target-feature/invalid-attribute.rs
+@@ -2,6 +2,7 @@
+ // ignore-aarch64
+ // ignore-wasm
+ // ignore-emscripten
++// ignore-loongarch64
+ // ignore-mips
+ // ignore-mips64
+ // ignore-powerpc
+diff --git a/src/tools/build-manifest/src/main.rs b/src/tools/build-manifest/src/main.rs
+index c1579ae9a..f90311c58 100644
+--- a/src/tools/build-manifest/src/main.rs
++++ b/src/tools/build-manifest/src/main.rs
+@@ -28,6 +28,7 @@ static HOSTS: &[&str] = &[
+     "i686-pc-windows-gnu",
+     "i686-pc-windows-msvc",
+     "i686-unknown-linux-gnu",
++    "loongarch64-unknown-linux-gnuf64",
+     "mips-unknown-linux-gnu",
+     "mips64-unknown-linux-gnuabi64",
+     "mips64el-unknown-linux-gnuabi64",
+@@ -99,6 +100,7 @@ static TARGETS: &[&str] = &[
+     "i686-unknown-freebsd",
+     "i686-unknown-linux-gnu",
+     "i686-unknown-linux-musl",
++    "loongarch64-unknown-linux-gnuf64",
+     "m68k-unknown-linux-gnu",
+     "mips-unknown-linux-gnu",
+     "mips-unknown-linux-musl",
+diff --git a/src/tools/clippy/tests/ui/asm_syntax.rs b/src/tools/clippy/tests/ui/asm_syntax.rs
+index 4a62f6f29..b76f18ddd 100644
+--- a/src/tools/clippy/tests/ui/asm_syntax.rs
++++ b/src/tools/clippy/tests/ui/asm_syntax.rs
+@@ -1,5 +1,6 @@
+ // only-x86_64
+ // ignore-aarch64
++// ignore-loongarch64
+ 
+ #![feature(asm)]
+ 
+diff --git a/src/tools/compiletest/src/json.rs b/src/tools/compiletest/src/json.rs
+index dc6d67983..bc3fb38ca 100644
+--- a/src/tools/compiletest/src/json.rs
++++ b/src/tools/compiletest/src/json.rs
+@@ -74,8 +74,8 @@ struct DiagnosticSpanMacroExpansion {
+ struct DiagnosticCode {
+     /// The code itself.
+     code: String,
+-    /// An explanation for the code.
+-    explanation: Option<String>,
++//    /// An explanation for the code.
++//    explanation: Option<String>,
+ }
+ 
+ pub fn rustfix_diagnostics_only(output: &str) -> String {
+diff --git a/src/tools/compiletest/src/util.rs b/src/tools/compiletest/src/util.rs
+index d03c21dc5..46fcd5f28 100644
+--- a/src/tools/compiletest/src/util.rs
++++ b/src/tools/compiletest/src/util.rs
+@@ -54,6 +54,7 @@ const ARCH_TABLE: &[(&str, &str)] = &[
+     ("i386", "x86"),
+     ("i586", "x86"),
+     ("i686", "x86"),
++    ("loongarch64", "loongarch64"),
+     ("m68k", "m68k"),
+     ("mips", "mips"),
+     ("mips64", "mips64"),
+@@ -133,7 +134,7 @@ const BIG_ENDIAN: &[&str] = &[
+ ];
+ 
+ static ASM_SUPPORTED_ARCHS: &[&str] = &[
+-    "x86", "x86_64", "arm", "aarch64", "riscv32", "riscv64", "nvptx64", "hexagon", "mips",
++    "x86", "x86_64", "arm", "aarch64", "riscv32", "riscv64", "nvptx64", "hexagon", "loongarch64", "mips",
+     "mips64", "spirv", "wasm32",
+ ];
+ 
+diff --git a/src/tools/miri/src/shims/foreign_items.rs b/src/tools/miri/src/shims/foreign_items.rs
+index 18f167323..25f02182f 100644
+--- a/src/tools/miri/src/shims/foreign_items.rs
++++ b/src/tools/miri/src/shims/foreign_items.rs
+@@ -47,7 +47,7 @@ pub trait EvalContextExt<'mir, 'tcx: 'mir>: crate::MiriEvalContextExt<'mir, 'tcx
+         // List taken from `libstd/sys_common/alloc.rs`.
+         let min_align = match this.tcx.sess.target.arch.as_str() {
+             "x86" | "arm" | "mips" | "powerpc" | "powerpc64" | "asmjs" | "wasm32" => 8,
+-            "x86_64" | "aarch64" | "mips64" | "s390x" | "sparc64" => 16,
++            "x86_64" | "aarch64" | "mips64" | "s390x" | "sparc64" | "loongarch64" => 16,
+             arch => bug!("Unsupported target architecture: {}", arch),
+         };
+         // Windows always aligns, even small allocations.
+-- 
+2.27.0
+
