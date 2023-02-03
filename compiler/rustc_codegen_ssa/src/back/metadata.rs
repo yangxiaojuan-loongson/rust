@@ -191,6 +191,11 @@ pub(crate) fn create_object_file(sess: &Session) -> Option<write::Object<'static
             }
             e_flags
         }
+        Architecture::LoongArch64 => {
+            // copied from `loongarch64-linux-gnu-gcc foo.c -c`
+            let e_flags = elf::EF_LARCH_OBJABI_V1 | elf::EF_LARCH_ABI_DOUBLE_FLOAT;
+            e_flags
+        }
         _ => 0,
     };
     // adapted from LLVM's `MCELFObjectTargetWriter::getOSABI`
